@@ -36,31 +36,63 @@ class AnalysisState(BaseModel):
 ### 4. 핵심 도구 함수 정의
 
 # DB 스키마 정보 생성 함수 정의
-def get_db_schema_info() -> str | None:
-    """데이터베이스 스키마 정보를 반환합니다."""
-    db_url = os.environ.get('DATABASE_URL')
-    if not db_url:
-        return "DATABASE_URL 환경변수가 설정되지 않았습니다."
+
+# def get_db_schema_info() -> str | None:
+#     """데이터베이스 스키마 정보를 반환합니다."""
+#     db_url = os.environ.get('DATABASE_URL')
+#     if not db_url:
+#         return "DATABASE_URL 환경변수가 설정되지 않았습니다."
     
-    try:
-        with psycopg2.connect(db_url) as conn:
-            cursor = conn.cursor()
-            # PostgreSQL 정보 스키마 조회
-            cursor.execute("""
-                SELECT column_name, data_type 
-                FROM information_schema.columns 
-                WHERE table_name = 'quarterly_sales';
-            """)
-            columns = cursor.fetchall()
-            if not columns:
-                return "테이블 정보를 찾을 수 없습니다."
+#     try:
+#         with psycopg2.connect(db_url) as conn:
+#             cursor = conn.cursor()
+#             # PostgreSQL 정보 스키마 조회
+#             cursor.execute("""
+#                 SELECT column_name, data_type 
+#                 FROM information_schema.columns 
+#                 WHERE table_name = 'quarterly_sales';
+#             """)
+#             columns = cursor.fetchall()
+#             if not columns:
+#                 return "테이블 정보를 찾을 수 없습니다."
             
-            schema_str = "Table: quarterly_sales\nColumns:\n"
-            for col_name, data_type in columns:
-                schema_str += f"- {col_name}: {data_type}\n"
-            return schema_str
-    except Exception as e:
-        return f"스키마 조회 중 오류 발생: {e}"
+#             schema_str = "Table: quarterly_sales\nColumns:\n"
+#             for col_name, data_type in columns:
+#                 schema_str += f"- {col_name}: {data_type}\n"
+#             return schema_str
+#     except Exception as e:
+#         return f"스키마 조회 중 오류 발생: {e}"
+
+# 기존 get_db_schema_info 함수를 아래 코드로 대체
+def get_db_schema_info() -> str | None:
+    """데이터베이스 스키마 정보를 반환합니다. (Hardcoded for stability)"""
+    
+    # create_database_openapi.py와 동일한 스키마 정의
+    schema_str = """
+    Table: quarterly_sales
+    Columns:
+    - year_quarter: TEXT (예: '20241' = 2024년 1분기)
+    - district_type: TEXT (상권구분코드명)
+    - district_code: TEXT (상권코드)
+    - district_name: TEXT (상권명, 예: '강남역', '성수동카페거리')
+    - service_category_code: TEXT (서비스업종코드)
+    - service_category_name: TEXT (서비스업종명, 예: '한식음식점', '커피-음료')
+    - monthly_sales_amount: BIGINT (월평균 매출액)
+    - monthly_sales_count: BIGINT (월평균 매출건수)
+    - weekday_sales_amount: BIGINT (주중 매출액)
+    - weekend_sales_amount: BIGINT (주말 매출액)
+    - sales_time_11_14: BIGINT (점심시간 11~14시 매출)
+    - sales_time_17_21: BIGINT (저녁시간 17~21시 매출)
+    - male_sales_amount: BIGINT (남성 매출액)
+    - female_sales_amount: BIGINT (여성 매출액)
+    - sales_by_age_10s: BIGINT (10대 매출액)
+    - sales_by_age_20s: BIGINT (20대 매출액)
+    - sales_by_age_30s: BIGINT (30대 매출액)
+    - sales_by_age_40s: BIGINT (40대 매출액)
+    - sales_by_age_50s: BIGINT (50대 매출액)
+    - sales_by_age_60s_above: BIGINT (60대 이상 매출액)
+    """
+    return schema_str
 
 # SQL 쿼리 실행 함수 정의
 def execute_sql_query(sql: str) -> List[Dict] | str:
