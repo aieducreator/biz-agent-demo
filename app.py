@@ -137,19 +137,28 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 2024년 1분기 강�
                 
                 # [수정된 시각화 처리 로직]
                 # state에 sql_result가 있고 데이터가 존재하면 시각화 시도
+                # [수정된 시각화 처리 로직]
+                # state에 sql_result가 있고 데이터가 존재하면 시각화 시도
                 if 'sql_result' in final_state and final_state['sql_result']:
                     data = final_state['sql_result']
                     df = pd.DataFrame(data)
                     
                     if not df.empty:
+                        # [수정] Decimal 타입을 실제 숫자(float/int)로 변환
+                        # 이 부분이 없으면 Pandas가 숫자를 object로 인식해서 그래프를 못 그립니다.
+                        for col in df.columns:
+                            # 숫자로 변환 가능한 컬럼은 강제로 변환 (에러나면 무시하고 원래대로 유지)
+                            df[col] = pd.to_numeric(df[col], errors='ignore')
+
                         st.divider()
                         st.subheader("📈 데이터 시각화")
                         
-                        # 1. 데이터 원본 확인 (디버깅용)
+                        # 1. 데이터 원본 확인
                         with st.expander("데이터 원본 보기"):
                             st.dataframe(df)
 
-                        # 2. X축(이름), Y축(수치) 자동 탐지 로직 고도화
+                        # 2. X축(이름), Y축(수치) 자동 탐지 로직
+                        # 이제 변환된 df에서 숫자를 찾으므로 정확하게 동작합니다.
                         numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
                         object_cols = df.select_dtypes(include=['object']).columns.tolist()
 
@@ -165,8 +174,7 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 2024년 1분기 강�
                         if not x_col and object_cols:
                             x_col = object_cols[0]
 
-                        # Y축 찾기: 'amount', 'sales', '매출', 'count' 등이 포함된 숫자 컬럼
-                        # 단, 'year', 'quarter', 'id'는 제외
+                        # Y축 찾기: 매출, 금액 관련 컬럼
                         for col in numeric_cols:
                             lower_col = col.lower()
                             if any(k in lower_col for k in ['amount', 'sales', '매출', 'sum', 'total', 'amt']):
@@ -189,8 +197,6 @@ if prompt := st.chat_input("질문을 입력하세요 (예: 2024년 1분기 강�
                                 chart_df = df.set_index(x_col)[y_cols]
                             
                             st.bar_chart(chart_df)
-                            # 필요 시 라인 차트 등 추가 가능
-                            # st.line_chart(chart_df)
                         else:
                             st.info("시각화할 적절한 수치 데이터를 찾지 못했습니다.")
 
