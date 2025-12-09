@@ -21,13 +21,22 @@ except Exception:
 # 2. 인증 (Authentication) 설정
 # 실제 운영 환경에서는 비밀번호를 환경변수나 보안 저장소에서 관리해야 합니다.
 # 여기서는 예시를 위해 하드코딩된 딕셔너리를 사용합니다.
-# 비밀번호는 '1234'의 해시값입니다. (stauth.Hasher(['1234']).generate()로 생성 가능)
+try:
+    # 최신 버전 호환성을 위해 Hasher 사용
+    from streamlit_authenticator.utilities.hasher import Hasher
+except ImportError:
+    # 구 버전 호환성
+    from streamlit_authenticator import Hasher
+
+passwords_to_hash = ['1234']
+hashed_passwords = Hasher(passwords_to_hash).generate()
+
 config = {
     'credentials': {
         'usernames': {
             'admin': {
                 'name': 'Admin User',
-                'password': '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', # 1234
+                'password': hashed_passwords[0],
                 'email': 'admin@example.com',
             }
         }
