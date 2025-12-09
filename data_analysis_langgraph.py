@@ -4,6 +4,7 @@ import json
 import asyncio
 import uuid
 import psycopg2
+import decimal
 from typing import List, Dict, Any, Annotated
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -184,8 +185,44 @@ async def sql_execution_node(state: AnalysisState) -> Dict[str, Any]:
     print(f"-> 실행 결과: {len(result)}개 행 조회")
     return {"sql_result": result}
 
+# async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
+#     """최종 보고서를 생성하고 상태를 업데이트하는 노드"""
+#     print("\n[Node: Report Generation]")
+    
+#     if state.error:
+#         return {"messages": [AIMessage(content=f"요청을 처리하는 중 문제가 발생했습니다.\n이유: {state.error}")]}
+
+#     original_query = state.original_query
+#     sql_query = state.sql_query
+#     sql_result = state.sql_result
+
+#     if not sql_result:
+#         report = "분석 결과, 해당 조건에 맞는 데이터가 없습니다."
+#     else:
+#         prompt = f"""
+#         당신은 전문 데이터 분석가이자 보고서 작성가입니다.
+#         다음은 사용자의 원본 질문과 데이터베이스에서 추출한 분석 결과입니다.
+#         이 데이터를 단순히 나열하지 말고, 사용자가 질문한 의도에 맞춰 의미 있는 인사이트를 도출하고, 비교 및 분석하여 상세한 최종 보고서를 마크다운 형식으로 작성해주세요.
+
+#         ### 원본 사용자 질문:
+#         {original_query}
+
+#         ### 데이터베이스 조회 결과 (JSON 형식):
+#         {json.dumps(sql_result, indent=2, ensure_ascii=False)}
+
+#         ### 최종 분석 보고서 (마크다운 형식):
+#         """
+#         response = await llm.ainvoke(prompt)
+#         report = response.content
+
+#     final_content = f"### 분석 보고서\n{report}\n\n---\n\n### 실행된 SQL 쿼리\n```sql\n{sql_query}\n```"
+#     return {"messages": [AIMessage(content=final_content)]}
+
 async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
-    """최종 보고서를 생성하고 상태를 업데이트하는 노드"""
+    """
+    최종 보고서를 생성하고 상태를 업데이트하는 노드,
+    JSON 변환 로직이 강화
+    """
     print("\n[Node: Report Generation]")
     
     if state.error:
@@ -198,6 +235,15 @@ async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
     if not sql_result:
         report = "분석 결과, 해당 조건에 맞는 데이터가 없습니다."
     else:
+        # [핵심 수정] Decimal 타입을 처리하기 위한 커스텀 인코더 함수
+        def decimal_default(obj):
+            if isinstance(obj, decimal.Decimal):
+                return int(obj)  # Decimal을 int로 변환 (금액 등은 정수가 보기에 좋음)
+            return str(obj)      # 그 외 알 수 없는 타입은 문자열로 변환
+
+        # json.dumps에 default=decimal_default 추가
+        json_result = json.dumps(sql_result, indent=2, ensure_ascii=False, default=decimal_default)
+
         prompt = f"""
         당신은 전문 데이터 분석가이자 보고서 작성가입니다.
         다음은 사용자의 원본 질문과 데이터베이스에서 추출한 분석 결과입니다.
@@ -207,7 +253,7 @@ async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
         {original_query}
 
         ### 데이터베이스 조회 결과 (JSON 형식):
-        {json.dumps(sql_result, indent=2, ensure_ascii=False)}
+        {json_result}
 
         ### 최종 분석 보고서 (마크다운 형식):
         """
@@ -216,7 +262,6 @@ async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
 
     final_content = f"### 분석 보고서\n{report}\n\n---\n\n### 실행된 SQL 쿼리\n```sql\n{sql_query}\n```"
     return {"messages": [AIMessage(content=final_content)]}
-
 
 ### 6. 그래프 생성 함수 (외부 호출용)
 def create_agent():
