@@ -1,0 +1,12 @@
+streamlit
+streamlit-authenticator
+langchain
+langchain-core
+langchain-openai
+langgraph
+openai
+psycopg2-binary
+python-dotenv
+pandas
+PyYAML
+nest_asyncio
