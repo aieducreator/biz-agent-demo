@@ -46,22 +46,21 @@ authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
     config['cookie']['key'],
-    config['cookie']['expiry_days'],
-    config['preauthorized']  
+    config['cookie']['expiry_days']
 )
 
 # 로그인 위젯
-name, authentication_status, username = authenticator.login('main')
+authenticator.login('main')
 
-if authentication_status is False:
+if st.session_state["authentication_status"] is False:
     st.error('Username/password is incorrect')
     st.stop()
-elif authentication_status is None:
+elif st.session_state["authentication_status"] is None:
     st.warning('Please enter your username and password')
     st.stop()
 
 # 로그인 성공 시
-st.sidebar.write(f'Welcome *{name}*')
+st.sidebar.write(f'Welcome *{st.session_state["name"]}*')
 authenticator.logout('Logout', 'sidebar')
 
 # 3. LangGraph 에이전트 초기화 (세션 상태에 저장)
