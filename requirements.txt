@@ -1,5 +1,5 @@
 streamlit
-streamlit-authenticator==0.2.3
+streamlit-authenticator
 langchain
 langchain-core
 langchain-openai
