@@ -95,7 +95,6 @@ def get_db_schema_info() -> str | None:
 #     """
 #     return schema_str
 
-# SQL 쿼리 실행 함수 정의
 def execute_sql_query(sql: str) -> List[Dict] | str:
     """SQL 쿼리를 실행하고 결과를 반환합니다."""
     db_url = os.environ.get('DATABASE_URL')
@@ -104,7 +103,6 @@ def execute_sql_query(sql: str) -> List[Dict] | str:
 
     try:
         with psycopg2.connect(db_url) as conn:
-            # 딕셔너리 형태로 결과를 받기 위해 RealDictCursor 사용
             from psycopg2.extras import RealDictCursor
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute(sql)
@@ -115,41 +113,69 @@ def execute_sql_query(sql: str) -> List[Dict] | str:
 ### 5. LangGraph 노드(Node) 정의
 
 async def sql_generation_node(state: AnalysisState) -> Dict[str, Any]:
-    """사용자 질문을 바탕으로 SQL을 생성하는 노드"""
+    """사용자 질문을 바탕으로 최적화된 SQL을 생성하는 노드"""
     print("\n[Node: SQL Generation]")
     user_query = state.messages[-1].content
     db_schema = get_db_schema_info()
 
+    # [전문가 수정] WITH문(CTE)과 집계(Aggregation) 전략이 포함된 프롬프트
     prompt = f"""
-    당신은 대한민국 서울시 상권분석 전문가이자 PostgreSQL 마스터입니다.
-    아래 DB 스키마와 컬럼 의미를 참고하여, 사용자 질문에 가장 적합한 PostgreSQL 쿼리를 생성해주세요.
+    당신은 대한민국 서울시 상권분석을 위한 PostgreSQL 쿼리 작성 전문가입니다.
+    아래 가이드라인을 엄격히 준수하여 사용자 질문에 가장 적합한 SQL을 작성하세요.
 
-    ### 데이터베이스 스키마:
+    ### 1. 데이터베이스 스키마 정보
     {db_schema}
+
+    ### 2. [필수] SQL 작성 전략 가이드
+
+    **상황 A: 시계열 비교 (성장률, 증가량 분석)**
+    - 질문 예: "2024년 1분기 대비 2025년 1분기 30대 매출이 가장 많이 늘어난 상권은?"
+    - **전략:** 반드시 **WITH문(CTE)**을 사용하여 각 시점의 데이터를 먼저 집계한 후 조인(Join)하십시오.
+    - **주의:** `quarterly_sales` 테이블은 '상권+업종' 단위로 데이터가 있습니다. 특정 업종을 언급하지 않았다면 반드시 `district_name`으로 `GROUP BY`하여 합계를 구해야 합니다.
     
-    ### 주요 컬럼 의미 (영문 컬럼명 -> 한글 의미):
-    - year_quarter: 기준년도분기 (예: '20241' = 2024년 1분기)
-    - district_name: 상권명
-    - service_category_name: 서비스 업종명
-    - monthly_sales_amount: 월평균 추정 매출액
-    - monthly_sales_count: 월평균 추정 매출 건수
-    - midweek_sales_amount: 주중 매출액
-    - weekend_sales_amount: 주말 매출액
-    - sales_time_11_14: 점심시간(11시~14시) 매출액
-    - sales_time_17_21: 저녁시간(17시~21시) 매출액
-    - male_sales_amount: 남성 매출액
-    - female_sales_amount: 여성 매출액
-    - sales_by_age_30s: 30대 연령층의 매출액
-    - 예를 들어, 사용자가 '점심 시간'을 언급하면 `sales_time_11_14` 컬럼을 사용해야 합니다.
+    *(올바른 작성 예시)*
+    ```sql
+    WITH q1 AS (
+        -- 과거 시점 집계
+        SELECT district_name, SUM(sales_by_age_30s) as sales_prev
+        FROM quarterly_sales 
+        WHERE year_quarter = '20241' 
+        GROUP BY district_name
+    ),
+    q2 AS (
+        -- 현재 시점 집계
+        SELECT district_name, SUM(sales_by_age_30s) as sales_curr
+        FROM quarterly_sales 
+        WHERE year_quarter = '20251' 
+        GROUP BY district_name
+    )
+    SELECT 
+        q2.district_name,
+        (q2.sales_curr - q1.sales_prev) as sales_increase
+    FROM q2
+    JOIN q1 ON q2.district_name = q1.district_name
+    ORDER BY sales_increase DESC
+    LIMIT 3;
+    ```
+
+    **상황 B: 단순 순위 및 조건 검색**
+    - 질문 예: "2024년 전체 기간 동안 골목상권 중 매출 1위는?"
+    - **전략:** `WHERE` 절로 조건을 걸고, `GROUP BY district_name` 후 `SUM`을 사용합니다.
+    - 예: `WHERE district_type LIKE '%골목상권%' AND year_quarter LIKE '2024%'`
+
+    ### 3. 출력 제약 사항
+    - 오직 실행 가능한 순수 PostgreSQL 쿼리 텍스트만 반환하세요.
+    - Markdown 코드 블록(```sql ... ```)이나 설명은 절대 포함하지 마세요.
+    - 결과 행 수는 질문에 명시되지 않았다면 기본 `LIMIT 5`를 적용하세요.
 
     ### 사용자의 질문:
     {user_query}
-
-    - 다른 설명 없이 오직 실행 가능한 PostgreSQL 쿼리만 생성해주세요.
-    - 마크다운 코드 블록(```sql ... ```)은 사용하지 마세요. 순수 SQL 텍스트만 반환하세요.
     """
+    
     response = await llm.ainvoke(prompt)
-    sql_query = response.content.strip().replace('`', '').replace('sql', '')
+    # 마크다운 코드 블록 제거 및 공백 정리
+    sql_query = response.content.strip().replace('```sql', '').replace('```', '').strip()
+    
     print(f"-> 생성된 SQL:\n{sql_query}")
     return {"original_query": user_query, "sql_query": sql_query}
 
@@ -172,10 +198,11 @@ async def sql_execution_node(state: AnalysisState) -> Dict[str, Any]:
     print("\n[Node: SQL Execution]")
     
     if state.error:
-        print("-> 에러가 존재하여 실행을 건너뜠습니다.")
+        print("-> 에러가 존재하여 실행을 건너뜀")
         return {"sql_result": []}
 
     sql_query = state.sql_query
+    # 비동기 환경에서 동기 함수 실행을 위해 run_in_executor 사용 권장 (혹은 to_thread)
     result = await asyncio.to_thread(execute_sql_query, sql_query)
     
     if isinstance(result, str):
@@ -185,44 +212,8 @@ async def sql_execution_node(state: AnalysisState) -> Dict[str, Any]:
     print(f"-> 실행 결과: {len(result)}개 행 조회")
     return {"sql_result": result}
 
-# async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
-#     """최종 보고서를 생성하고 상태를 업데이트하는 노드"""
-#     print("\n[Node: Report Generation]")
-    
-#     if state.error:
-#         return {"messages": [AIMessage(content=f"요청을 처리하는 중 문제가 발생했습니다.\n이유: {state.error}")]}
-
-#     original_query = state.original_query
-#     sql_query = state.sql_query
-#     sql_result = state.sql_result
-
-#     if not sql_result:
-#         report = "분석 결과, 해당 조건에 맞는 데이터가 없습니다."
-#     else:
-#         prompt = f"""
-#         당신은 전문 데이터 분석가이자 보고서 작성가입니다.
-#         다음은 사용자의 원본 질문과 데이터베이스에서 추출한 분석 결과입니다.
-#         이 데이터를 단순히 나열하지 말고, 사용자가 질문한 의도에 맞춰 의미 있는 인사이트를 도출하고, 비교 및 분석하여 상세한 최종 보고서를 마크다운 형식으로 작성해주세요.
-
-#         ### 원본 사용자 질문:
-#         {original_query}
-
-#         ### 데이터베이스 조회 결과 (JSON 형식):
-#         {json.dumps(sql_result, indent=2, ensure_ascii=False)}
-
-#         ### 최종 분석 보고서 (마크다운 형식):
-#         """
-#         response = await llm.ainvoke(prompt)
-#         report = response.content
-
-#     final_content = f"### 분석 보고서\n{report}\n\n---\n\n### 실행된 SQL 쿼리\n```sql\n{sql_query}\n```"
-#     return {"messages": [AIMessage(content=final_content)]}
-
 async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
-    """
-    최종 보고서를 생성하고 상태를 업데이트하는 노드,
-    JSON 변환 로직이 강화
-    """
+    """최종 보고서를 생성하는 노드 (SQL 해석 능력 강화)"""
     print("\n[Node: Report Generation]")
     
     if state.error:
@@ -233,29 +224,32 @@ async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
     sql_result = state.sql_result
 
     if not sql_result:
-        report = "분석 결과, 해당 조건에 맞는 데이터가 없습니다."
+        report = "분석 결과, 해당 조건에 맞는 데이터가 없습니다.\n조건을 변경하여 다시 질문해 주세요."
     else:
-        # [핵심 수정] Decimal 타입을 처리하기 위한 커스텀 인코더 함수
-        def decimal_default(obj):
-            if isinstance(obj, decimal.Decimal):
-                return int(obj)  # Decimal을 int로 변환 (금액 등은 정수가 보기에 좋음)
-            return str(obj)      # 그 외 알 수 없는 타입은 문자열로 변환
+        # Decimal 등 JSON 직렬화 불가 객체 처리
+        def default_converter(o):
+            if isinstance(o, decimal.Decimal):
+                return int(o)
+            return str(o)
 
-        # json.dumps에 default=decimal_default 추가
-        json_result = json.dumps(sql_result, indent=2, ensure_ascii=False, default=decimal_default)
+        json_result = json.dumps(sql_result, indent=2, ensure_ascii=False, default=default_converter)
 
+        # [전문가 수정] SQL 쿼리를 프롬프트에 포함하여 데이터 문맥(Context) 이해도 향상
         prompt = f"""
         당신은 전문 데이터 분석가이자 보고서 작성가입니다.
-        다음은 사용자의 원본 질문과 데이터베이스에서 추출한 분석 결과입니다.
-        이 데이터를 단순히 나열하지 말고, 사용자가 질문한 의도에 맞춰 의미 있는 인사이트를 도출하고, 비교 및 분석하여 상세한 최종 보고서를 마크다운 형식으로 작성해주세요.
-
-        ### 원본 사용자 질문:
-        {original_query}
-
-        ### 데이터베이스 조회 결과 (JSON 형식):
+        
+        ### 분석 작업 정보
+        1. **사용자 질문:** {original_query}
+        2. **실행된 SQL 쿼리:** {sql_query}
+        
+        ### 데이터베이스 조회 결과:
         {json_result}
 
-        ### 최종 분석 보고서 (마크다운 형식):
+        ### 작성 가이드
+        - 위 SQL 쿼리의 로직(예: 어떤 기간을 비교했는지, 어떤 컬럼을 뺐는지)을 이해하고 결과를 해석하세요.
+        - 단순 나열이 아닌, "가장 높은 곳은 어디이며, 얼마나 증가했는지" 등 인사이트 위주로 서술하세요.
+        - 금액 단위가 크다면 '억', '천만' 등으로 가독성 있게 표현하세요.
+        - 보고서는 깔끔한 마크다운 형식으로 작성하세요.
         """
         response = await llm.ainvoke(prompt)
         report = response.content
@@ -263,12 +257,10 @@ async def report_generation_node(state: AnalysisState) -> Dict[str, Any]:
     final_content = f"### 분석 보고서\n{report}\n\n---\n\n### 실행된 SQL 쿼리\n```sql\n{sql_query}\n```"
     return {"messages": [AIMessage(content=final_content)]}
 
-### 6. 그래프 생성 함수 (외부 호출용)
+### 6. 그래프 생성 함수
 def create_agent():
-    # 메모리 저장소 (In-Memory)
     memory = MemorySaver()
     
-    # 그래프 구성
     graph_builder = StateGraph(AnalysisState)
     graph_builder.add_node("generate_sql", sql_generation_node)
     graph_builder.add_node("validate_sql", sql_validation_node)
@@ -278,11 +270,10 @@ def create_agent():
     graph_builder.set_entry_point("generate_sql")
     graph_builder.add_edge("generate_sql", "validate_sql")
     
-    # 조건부 엣지 대신 노드 내부에서 에러 체크 후 분기 처리하는 방식 사용 (여기서는 단순 선형 연결하되, 노드 내부에서 state.error 체크)
-    # 더 명시적인 방법: add_conditional_edges 사용
+    # 조건부 엣지: 에러 발생 시 리포트 생성으로 건너뜀
     def check_error(state: AnalysisState):
         if state.error:
-            return "generate_report" # 에러가 있으면 바로 리포트로 (리포트에서 에러 출력)
+            return "generate_report"
         return "execute_sql"
 
     graph_builder.add_conditional_edges(
@@ -299,12 +290,12 @@ def create_agent():
 
     return graph_builder.compile(checkpointer=memory)
 
-### 7. 콘솔 실행 로직 (테스트용)
+### 7. 메인 실행
 async def main():
     agent_executor = create_agent()
     
     print("==================================================")
-    print("      서울시 상권 분석 전문 AI 에이전트 (콘솔 모드)      ")
+    print("      서울시 상권 분석 전문 AI 에이전트      ")
     print("==================================================")
     
     thread_id = str(uuid.uuid4())
